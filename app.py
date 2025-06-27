@@ -1,6 +1,7 @@
 from flask import Flask
 from config.config import DATABASE_CONNECTION_URI
-from models.db import db
+from db import db
+from models.song import Song
 
 app = Flask(__name__)
 app.secret_key = 'clave_secreta'
@@ -12,6 +13,8 @@ db.init_app(app)
 
 with app.app_context():
     try:
+        from models.song import Song
+        db.create_all()
         print ("Base de datos inicializada")
     except Exception as e:
         print(f"Error al inicializar la base de datos: {e}")
