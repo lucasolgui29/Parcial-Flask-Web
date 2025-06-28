@@ -10,7 +10,6 @@ canciones_bp = Blueprint('canciones_bp', __name__, url_prefix='/canciones')
 def obtener_canciones(): 
     
     try:
-        # Inicia la consulta filtrando solo las canciones activas por defecto
         consulta = Song.query.filter_by(activo=True) 
         canciones = consulta.all() 
         return jsonify([cancion.a_diccionario() for cancion in canciones]), 200 
@@ -35,7 +34,7 @@ def crear_cancion():
 
     titulo_req = datos.get('titulo') 
     artista_req = datos.get('artista') 
-    duracion_req = datos.get('duracion') # Duración en segundos, tal como en la DB
+    duracion_req = datos.get('duracion')
 
     if not titulo_req or not artista_req or not isinstance(duracion_req, (int, float)) or duracion_req <= 0: 
         return jsonify({"mensaje": "Faltan campos obligatorios (titulo, artista, duracion válido)."}), 400 
@@ -44,9 +43,8 @@ def crear_cancion():
         nueva_cancion = Song( 
             titulo=titulo_req, 
             artista=artista_req, 
-            duracion=int(duracion_req), # Directamente en segundos
+            duracion=int(duracion_req),
             album=datos.get('album'), 
-            # genero ya no se recibe ni se asigna
             anio=datos.get('anio'), 
             fecha_lanzamiento=datos.get('fecha_lanzamiento'), 
             hora_estreno=datos.get('hora_estreno'),         
@@ -82,12 +80,11 @@ def actualizar_cancion(id_cancion):
         cancion.artista = datos['artista'] 
     if 'duracion' in datos: 
         if isinstance(datos['duracion'], (int, float)) and datos['duracion'] > 0: 
-            cancion.duracion = int(datos['duracion']) # Directamente en segundos
+            cancion.duracion = int(datos['duracion'])
         else:
             return jsonify({"mensaje": "duracion debe ser un número entero positivo."}), 400 
     if 'album' in datos: 
         cancion.album = datos['album'] 
-    # genero ya no se espera para actualizar
     if 'anio' in datos: 
         cancion.anio = datos['anio'] 
 
