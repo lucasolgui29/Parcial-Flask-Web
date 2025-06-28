@@ -1,144 +1,184 @@
 import os
-from flask import Blueprint, flash, redirect, render_template, request, url_for
-from werkzeug.utils import secure_filename
+from flask import Blueprint, flash, redirect, render_template, request, url_for, jsonify
+# werkzeug.utils.secure_filename no se usa en estas rutas, puedes quitarla si no la necesitas
+# from werkzeug.utils import secure_filename 
 from db import db
+from models.song import Song # Importa tu modelo Song
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError # Importa SQLAlchemyError para un manejo más amplio
 
-from flask import Blueprint, request, jsonify
-from db import db
-from models.song import Song
-from sqlalchemy.exc import IntegrityError # Para manejar errores de unicidad, etc.
+# Renombrar el Blueprint y su url_prefix para consistencia en español
+canciones_bp = Blueprint('canciones_bp', __name__, url_prefix='/canciones') #
 
-song_bp = Blueprint('song_bp', __name__, url_prefix='/api/v1/songs')
-def get_duration_category(duration_ms):
-    if duration_ms < 120000: # Menos de 2 minutos
-        return 'short'
-    elif 120000 <= duration_ms < 300000: # Entre 2 y 5 minutos
-        return 'medium'
-    else: # Más de 5 minutos
-        return 'long'
-
-@song_bp.route('/', methods=['GET'])
-def get_songs():
-    # Obtener query parameters para filtrado
-    duration_filter = request.args.get('duration', '').lower() # 'short', 'medium', 'long'
+@canciones_bp.route('/', methods=['GET'])
+def obtener_canciones(): # Función para obtener todas las canciones, con filtrado
+    filtro_duracion = request.args.get('duracion', '').lower() #
     
-    query = Song.query.filter_by(is_active=True)
+    # Inicia la consulta filtrando solo las canciones activas por defecto
+    consulta = Song.query.filter_by(activo=True) #
 
-    if duration_filter:
-        if duration_filter == 'short':
-            query = query.filter(Song.duration_ms < 120000)
-        elif duration_filter == 'medium':
-            query = query.filter(Song.duration_ms >= 120000, Song.duration_ms < 300000)
-        elif duration_filter == 'long':
-            query = query.filter(Song.duration_ms >= 300000)
+    if filtro_duracion: #
+        if filtro_duracion == 'corta': #
+            # Usamos el atributo 'duracion' del modelo que mapea a la columna 'duracion' de la DB (en segundos)
+            consulta = consulta.filter(Song.duracion < 120) # Menos de 2 minutos (120 segundos)
+        elif filtro_duracion == 'media': #
+            consulta = consulta.filter(Song.duracion >= 120, Song.duracion < 300) # Entre 2 y 5 minutos (120-300 segundos)
+        elif filtro_duracion == 'larga': #
+            consulta = consulta.filter(Song.duracion >= 300) # Más de 5 minutos (300 segundos)
         else:
-            return jsonify({"message": "Filtro de duración no válido. Use 'short', 'medium' o 'long'."}), 400
+            return jsonify({"mensaje": "Filtro de duración no válido. Use 'corta', 'media' o 'larga'."}), 400
 
-    songs = query.all()
-    return jsonify([song.to_dict() for song in songs]), 200
+    try:
+        canciones = consulta.all() #
+        # Usa el método a_diccionario() del modelo Song
+        return jsonify([cancion.a_diccionario() for cancion in canciones]), 200 #
+    except SQLAlchemyError as e:
+        # Captura errores específicos de la base de datos
+        return jsonify({"mensaje": f"Error de base de datos al obtener canciones: {str(e)}"}), 500 #
+    except Exception as e:
+        # Captura cualquier otro error inesperado
+        return jsonify({"mensaje": f"Error interno del servidor: {str(e)}"}), 500 #
 
-@song_bp.route('/<int:song_id>', methods=['GET'])
-def get_song(song_id):
-    song = Song.query.get(song_id)
-    if song:
-        return jsonify(song.to_dict()), 200
-    return jsonify({"message": "Canción no encontrada."}), 404
 
-@song_bp.route('/', methods=['POST'])
-def create_song():
-    data = request.get_json()
-    if not data:
-        return jsonify({"message": "Datos JSON inválidos."}), 400
+@canciones_bp.route('/<int:id_cancion>', methods=['GET'])
+def obtener_cancion(id_cancion): # Función para obtener una canción por ID
+    # Solo se buscan canciones activas por defecto
+    cancion = Song.query.filter_by(id=id_cancion, activo=True).first() #
+    if cancion: #
+        return jsonify(cancion.a_diccionario()), 200 #
+    return jsonify({"mensaje": "Canción no encontrada o no activa."}), 404 #
 
-    title = data.get('title')
-    artist = data.get('artist')
-    duration_ms = data.get('duration_ms') # Debe ser un entero en milisegundos
+@canciones_bp.route('/', methods=['POST'])
+def crear_cancion(): # Función para crear una nueva canción
+    datos = request.get_json() #
+    if not datos: #
+        return jsonify({"mensaje": "Datos JSON inválidos o ausentes."}), 400 #
+
+    titulo_req = datos.get('titulo') #
+    artista_req = datos.get('artista') #
+    # Esperamos 'duracion' del cliente, que debe ser en segundos para coincidir con la DB
+    duracion_req = datos.get('duracion') #
 
     # Validaciones básicas
-    if not title or not artist or not isinstance(duration_ms, int) or duration_ms <= 0:
-        return jsonify({"message": "Faltan campos obligatorios (title, artist, duration_ms válido)."}), 400
+    if not titulo_req or not artista_req or not isinstance(duracion_req, (int, float)) or duracion_req <= 0: #
+        return jsonify({"mensaje": "Faltan campos obligatorios (titulo, artista, duracion válido)."}), 400 #
 
     try:
-        new_song = Song(
-            title=title,
-            artist=artist,
-            duration_ms=duration_ms,
-            album=data.get('album'),
-            genre=data.get('genre'),
-            release_year=data.get('release_year')
+        nueva_cancion = Song( #
+            titulo=titulo_req, #
+            artista=artista_req, #
+            duracion=int(duracion_req), # Mapea a la columna 'duracion' en segundos
+            album=datos.get('album'), #
+            genero=datos.get('genero'), #
+            anio=datos.get('anio'), # Coincide con la columna 'anio' de la DB
+            fecha_lanzamiento=datos.get('fecha_lanzamiento'), # Asegúrate que el formato sea 'YYYY-MM-DD'
+            hora_estreno=datos.get('hora_estreno'),         # Asegúrate que el formato sea 'HH:MM:SS'
+            descripcion=datos.get('descripcion'), #
+            email_contacto=datos.get('email_contacto') #
         )
-        db.session.add(new_song)
-        db.session.commit()
-        return jsonify(new_song.to_dict()), 201 # 201 Created
+        db.session.add(nueva_cancion) #
+        db.session.commit() #
+        return jsonify(nueva_cancion.a_diccionario()), 201 # 201 Created
     except IntegrityError:
-        db.session.rollback()
-        return jsonify({"message": "Error de integridad de datos. Posiblemente un campo UNIQUE duplicado."}), 409 # Conflict
+        db.session.rollback() #
+        return jsonify({"mensaje": "Error de integridad de datos. Posiblemente un campo UNIQUE duplicado o dato inválido."}), 409 #
+    except SQLAlchemyError as e:
+        db.session.rollback() #
+        return jsonify({"mensaje": f"Error de base de datos al crear canción: {str(e)}"}), 500 #
     except Exception as e:
-        db.session.rollback()
-        return jsonify({"message": f"Error interno del servidor: {e}"}), 500
+        db.session.rollback() #
+        return jsonify({"mensaje": f"Error interno del servidor: {str(e)}"}), 500 #
 
-@song_bp.route('/<int:song_id>', methods=['PUT'])
-def update_song(song_id):
-    song = Song.query.get(song_id)
-    if not song:
-        return jsonify({"message": "Canción no encontrada."}), 404
+@canciones_bp.route('/<int:id_cancion>', methods=['PUT'])
+def actualizar_cancion(id_cancion):
+    # Solo permite actualizar canciones activas, a menos que se necesite restaurar con PUT (mejor con PATCH)
+    cancion = Song.query.filter_by(id=id_cancion, activo=True).first() #
+    if not cancion: #
+        return jsonify({"mensaje": "Canción no encontrada o no activa para actualizar."}), 404 #
 
-    data = request.get_json()
-    if not data:
-        return jsonify({"message": "Datos JSON inválidos."}), 400
+    datos = request.get_json() #
+    if not datos: #
+        return jsonify({"mensaje": "Datos JSON inválidos o ausentes."}), 400 #
 
-    # Actualizar campos si están presentes en la solicitud
-    song.title = data.get('title', song.title)
-    song.artist = data.get('artist', song.artist)
-    song.duration_ms = data.get('duration_ms', song.duration_ms)
-    song.album = data.get('album', song.album)
-    song.genre = data.get('genre', song.genre)
-    song.release_year = data.get('release_year', song.release_year)
+    # Actualizar campos si están presentes en la solicitud y son válidos
+    if 'titulo' in datos: #
+        cancion.titulo = datos['titulo'] #
+    if 'artista' in datos: #
+        cancion.artista = datos['artista'] #
+    if 'duracion' in datos: #
+        if isinstance(datos['duracion'], (int, float)) and datos['duracion'] > 0: #
+            cancion.duracion = int(datos['duracion']) # Mapea a la columna 'duracion' en segundos
+        else:
+            return jsonify({"mensaje": "duracion debe ser un número entero positivo."}), 400 #
+    if 'album' in datos: #
+        cancion.album = datos['album'] #
+    if 'genero' in datos: #
+        cancion.genero = datos['genero'] #
+    if 'anio' in datos: #
+        cancion.anio = datos['anio'] # Coincide con la columna 'anio' de la DB
 
-    # Opcional: permitir cambiar is_active con PUT
-    if 'is_active' in data:
-        song.is_active = bool(data['is_active'])
+    # Si se intenta cambiar 'activo' con PUT, asegúrate de que sea booleano.
+    if 'activo' in datos: #
+        if isinstance(datos['activo'], bool): #
+            cancion.activo = datos['activo'] #
+        else:
+            return jsonify({"mensaje": "activo debe ser un valor booleano (true/false)."}), 400 #
+    
+    # Actualizar campos adicionales si se envían
+    if 'fecha_lanzamiento' in datos: #
+        cancion.fecha_lanzamiento = datos['fecha_lanzamiento'] #
+    if 'hora_estreno' in datos: #
+        cancion.hora_estreno = datos['hora_estreno'] #
+    if 'descripcion' in datos: #
+        cancion.descripcion = datos['descripcion'] #
+    if 'email_contacto' in datos: #
+        cancion.email_contacto = datos['email_contacto'] #
 
     try:
-        db.session.commit()
-        return jsonify(song.to_dict()), 200 # OK
+        db.session.commit() #
+        return jsonify(cancion.a_diccionario()), 200 # OK
     except IntegrityError:
-        db.session.rollback()
-        return jsonify({"message": "Error de integridad de datos al actualizar."}), 409
+        db.session.rollback() #
+        return jsonify({"mensaje": "Error de integridad de datos al actualizar. Posiblemente un campo UNIQUE duplicado o dato inválido."}), 409 #
+    except SQLAlchemyError as e:
+        db.session.rollback() #
+        return jsonify({"mensaje": f"Error de base de datos al actualizar canción: {str(e)}"}), 500 #
     except Exception as e:
-        db.session.rollback()
-        return jsonify({"message": f"Error interno del servidor: {e}"}), 500
+        db.session.rollback() #
+        return jsonify({"mensaje": f"Error interno del servidor: {str(e)}"}), 500 #
 
-@song_bp.route('/<int:song_id>', methods=['DELETE'])
-def soft_delete_song(song_id):
-    song = Song.query.get(song_id)
-    if not song:
-        return jsonify({"message": "Canción no encontrada."}), 404
+@canciones_bp.route('/<int:id_cancion>', methods=['DELETE'])
+def baja_logica_cancion(id_cancion):
+    cancion = Song.query.filter_by(id=id_cancion, activo=True).first() # Solo se puede "eliminar" si está activa
+    if not cancion: #
+        return jsonify({"mensaje": "Canción no encontrada o ya dada de baja."}), 404 #
     
-    if not song.is_active:
-        return jsonify({"message": "La canción ya está dada de baja."}), 400
-
-    song.is_active = False # Marca como inactiva
+    cancion.activo = False # Marca como inactiva
     try:
-        db.session.commit()
-        return jsonify({"message": f"Canción '{song.title}' dada de baja exitosamente."}), 200
+        db.session.commit() #
+        return jsonify({"mensaje": f"Canción '{cancion.titulo}' (ID: {cancion.id}) dada de baja exitosamente."}), 200 #
+    except SQLAlchemyError as e:
+        db.session.rollback() #
+        return jsonify({"mensaje": f"Error de base de datos al dar de baja la canción: {str(e)}"}), 500 #
     except Exception as e:
-        db.session.rollback()
-        return jsonify({"message": f"Error al dar de baja la canción: {e}"}), 500
+        db.session.rollback() #
+        return jsonify({"mensaje": f"Error interno del servidor: {str(e)}"}), 500 #
 
-@song_bp.route('/<int:song_id>/restore', methods=['PATCH'])
-def restore_song(song_id):
-    song = Song.query.get(song_id)
-    if not song:
-        return jsonify({"message": "Canción no encontrada."}), 404
+@canciones_bp.route('/<int:id_cancion>/restaurar', methods=['PATCH'])
+def restaurar_cancion(id_cancion):
+    cancion = Song.query.filter_by(id=id_cancion, activo=False).first() # Busca solo canciones inactivas
+    if not cancion: #
+        return jsonify({"mensaje": "Canción no encontrada o ya está activa."}), 404 #
     
-    if song.is_active:
-        return jsonify({"message": "La canción ya está activa."}), 400
-
-    song.is_active = True 
+    cancion.activo = True #
     try:
-        db.session.commit()
-        return jsonify({"message": f"Canción '{song.title}' restaurada exitosamente."}), 200
+        db.session.commit() #
+        return jsonify({"mensaje": f"Canción '{cancion.titulo}' (ID: {cancion.id}) restaurada exitosamente."}), 200 #
+    except SQLAlchemyError as e:
+        db.session.rollback() #
+        return jsonify({"mensaje": f"Error de base de datos al restaurar la canción: {str(e)}"}), 500 #
     except Exception as e:
-        db.session.rollback()
-        return jsonify({"message": f"Error al restaurar la canción: {e}"}), 500
+        db.session.rollback() #
+        return jsonify({"mensaje": f"Error interno del servidor: {str(e)}"}), 500 #
+
+# La ruta '/api' está comentada y no es necesaria si '/' ya devuelve JSON.
+# Puedes eliminarla si no tiene un propósito distinto.
