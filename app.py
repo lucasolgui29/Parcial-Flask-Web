@@ -15,7 +15,7 @@ db.init_app(app)
 with app.app_context():
     try:
         from models.song import Song
-        db.drop_all() # Elimina todas las canciones existentes
+        db.drop_all()
         db.create_all()
         print ("Base de datos inicializada")
     except Exception as e:
